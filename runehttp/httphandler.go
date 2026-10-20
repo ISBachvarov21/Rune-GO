@@ -1,4 +1,4 @@
-package httphandler
+package runehttp
 
 import (
 	"encoding/json"
