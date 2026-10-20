@@ -1,48 +1,43 @@
 package httphandler
 
 import (
-	`encoding/json`
-	`fmt`
+	"encoding/json"
+	"fmt"
 	"net/http"
-	`reflect`
+	"reflect"
+
+	"github.com/julienschmidt/httprouter"
 )
 
 type Context struct {
-	w http.ResponseWriter
-	r *http.Request
+	w  http.ResponseWriter
+	r  *http.Request
+	ps httprouter.Params
+}
+
+// Param returns the value of the named route parameter, e.g. "id" for "/users/:id".
+func (c *Context) Param(name string) string {
+	return c.ps.ByName(name)
 }
 
 type Response struct {
 	statusCode int
+	header     http.Header
+	body       []byte
 }
-
 type HTTPFunc func(*Context) (Response, error)
 
 type HTTPHandler struct {
-	routes map[string]map[string]HTTPFunc
+	router *httprouter.Router
+}
+
+func NewHTTPHandler() *HTTPHandler {
+	return &HTTPHandler{router: httprouter.New()}
 }
 
 // todo: wrap to remove w from argument list
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// search for handler inside route->method
-	contextMethods, ok := h.routes[r.URL.Path]
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-
-	handler, ok := contextMethods[r.Method]
-	if !ok {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	ctx := &Context{w: w, r: r}
-
-	// todo: handle errors
-	handler(ctx)
-
-	// todo: if not a match try searching for a match in dynamic paths
+	h.router.ServeHTTP(w, r)
 }
 
 func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
@@ -56,15 +51,15 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	}
 
 	// Only support:
-	// func(...) runehttp.Response
-	if t.NumOut() != 1 {
-		return fmt.Errorf("handler must return one value")
+	// func(...) (runehttp.Response, error)
+	if t.NumOut() != 2 {
+		return fmt.Errorf("handler must return two values")
 	}
 
 	// Supported:
-	// func (*Context) Response
-	// func (Serializable) Response
-	// func (*Context, Serializable) Response
+	// func (*Context) (runehttp.Response, error)
+	// func (Serializable) (runehttp.Response, error)
+	// func (*Context, Serializable) (runehttp.Response, error)
 	if t.NumIn() < 1 || t.NumIn() > 2 {
 		return fmt.Errorf("handler must only accept one or two arguments")
 	}
@@ -72,7 +67,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	fn := reflect.ValueOf(handler)
 
 	firstArg := t.In(0)
-	hasContext := firstArg != reflect.TypeOf((*Context)(nil))
+	hasContext := firstArg == reflect.TypeFor[*Context]()
 
 	var bodyType reflect.Type
 
@@ -88,7 +83,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	}
 
 	if bodyType != nil {
-		if bodyType.Kind() == reflect.Ptr {
+		if bodyType.Kind() == reflect.Pointer {
 			if bodyType.Elem().Kind() != reflect.Struct {
 				return fmt.Errorf("body argument must be a struct or a pointer to a struct")
 			}
@@ -107,31 +102,225 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 		if bodyType != nil {
 			var body reflect.Value
 
-			if bodyType.Kind() == reflect.Ptr {
+			if bodyType.Kind() == reflect.Pointer {
 				body = reflect.New(bodyType.Elem())
 			} else {
 				body = reflect.New(bodyType)
 			}
 
 			if err := json.NewDecoder(c.r.Body).Decode(body.Interface()); err != nil {
-				http.Error(
-					c.w,
-					"Invalid JSON body",
-					http.StatusBadRequest,
-				)
-				response := Response{}
-				return
+				response := BadRequest(nil)
+				return response, nil
 			}
 
+			if bodyType.Kind() != reflect.Pointer {
+				body = body.Elem()
+			}
+
+			args = append(args, body)
 		}
 
+		values := fn.Call(args)
+		return values[0].Interface().(Response), values[1].Interface().(error)
 	}
 
-	if h.routes == nil {
-		h.routes = map[string]map[string]http.HandlerFunc{}
+	h.router.Handle(method, path, func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+		c := &Context{w: w, r: r, ps: ps}
+
+		resp, err := wrapped(c)
+
+		if err != nil {
+			resp = InternalServerError(nil)
+		}
+
+		for k, vs := range resp.header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+
+		w.WriteHeader(resp.statusCode)
+
+		if resp.statusCode != 204 && resp.statusCode != 304 {
+			w.Write(resp.body)
+		}
+	})
+
+	return nil
+}
+
+func InternalServerError(body interface{}) Response {
+	r := Response{statusCode: http.StatusInternalServerError}
+	r.header = http.Header{}
+
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err == nil {
+			r.body = data
+			r.header.Add("Content-Type", "application/json")
+		} else {
+			r.body = []byte(err.Error())
+			r.header.Add("Content-Type", "text/plain")
+		}
 	}
-	if h.routes[path] == nil {
-		h.routes[path] = map[string]http.HandlerFunc{}
+	return r
+}
+
+func BadRequest(body interface{}) Response {
+	r := Response{statusCode: http.StatusBadRequest}
+	r.header = http.Header{}
+
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+
+		}
+		r.body = data
+		r.header.Add("Content-Type", "application/json")
 	}
-	h.routes[path][method] = handler
+
+	return r
+}
+
+func JSON(obj interface{}) Response {
+	r := Response{}
+	r.statusCode = http.StatusOK
+	r.header = http.Header{}
+	r.header.Add("content-type", "application/json")
+
+	body, err := json.Marshal(obj)
+	if err != nil {
+		return BadRequest(err)
+	}
+	r.body = body
+
+	return r
+}
+
+func Created(body interface{}) Response {
+	r := Response{statusCode: http.StatusCreated}
+	r.header = http.Header{}
+
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+
+	return r
+}
+
+func NoContent() Response {
+	r := Response{statusCode: http.StatusNoContent}
+	return r
+}
+
+func OK(body interface{}) Response {
+	r := Response{statusCode: http.StatusOK}
+	r.header = http.Header{}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+	return r
+}
+
+func Unauthorized(body interface{}) Response {
+	r := Response{statusCode: http.StatusUnauthorized}
+	r.header = http.Header{}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+	return r
+}
+
+func Forbidden(body interface{}) Response {
+	r := Response{statusCode: http.StatusForbidden}
+	r.header = http.Header{}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+	return r
+}
+
+func NotFound(body interface{}) Response {
+	r := Response{statusCode: http.StatusNotFound}
+	r.header = http.Header{}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+	return r
+}
+
+func Conflict(body interface{}) Response {
+	r := Response{statusCode: http.StatusConflict}
+	r.header = http.Header{}
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return InternalServerError(err)
+		}
+		r.body = data
+		r.header.Add("content-type", "application/json")
+	}
+	return r
+}
+
+func Text(s string) Response {
+	r := Response{statusCode: http.StatusOK}
+	r.header = http.Header{}
+	r.header.Add("content-type", "text/plain; charset=utf-8")
+	r.body = []byte(s)
+	return r
+}
+
+func HTML(s string) Response {
+	r := Response{statusCode: http.StatusOK}
+	r.header = http.Header{}
+	r.header.Add("content-type", "text/html; charset=utf-8")
+	r.body = []byte(s)
+	return r
+}
+
+func Redirect(url string) Response {
+	r := Response{statusCode: http.StatusFound}
+	r.header = http.Header{}
+	r.header.Add("Location", url)
+	return r
+}
+
+// Custom is a generic escape hatch for responses that don't fit the
+// standard constructors (file downloads, CSV exports, etc.).
+// contentType may be empty if there is no body.
+func Custom(statusCode int, contentType string, body []byte) Response {
+	r := Response{statusCode: statusCode}
+	r.header = http.Header{}
+	if contentType != "" {
+		r.header.Add("Content-Type", contentType)
+	}
+	r.body = body
+	return r
 }
