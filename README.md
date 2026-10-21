@@ -60,8 +60,6 @@ As you see by these examples, several aspects of the normal Golang HTTP API have
 ## Endpoint registration
 One registers an endpoint by giving the respective endpoint handler a comment containing a RUNE directive of the following syntax: `RUNE <METHOD> <PATH>`. Doesn't matter where in the comment it is, could be at the start, could be at the end, could be somewhere in the middle, go wild.
 
-***Note: automatic endpoint registration is currently WIP.***
-
 ## Accessing original HTTP request, writer and julienschmidt/httprouter's request params
 Accessing any of the aforementioned objects is done through the *runehttp.Context argument. The original request is the `R *http.Request` field, the writer is the `W http.ResponseWriter` field, and the request params are in the `PS httprouter.Params` field.
 
