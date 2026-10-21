@@ -12,9 +12,7 @@ func main() {
 	flag.Parse()
 
 	if *shouldWatch {
-		go internal.StartWatcher()
-		<-make(chan struct{})
-
+		internal.StartWatcher("./routes/")
 	} else {
 		err := internal.WalkEndpoints("./routes/")
 		if err != nil {

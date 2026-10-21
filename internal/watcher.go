@@ -38,7 +38,7 @@ type handler struct {
 
 var currentHandler handler
 
-func StartWatcher() {
+func StartWatcher(path string) {
 	watcher, err := fsnotify.NewWatcher()
 
 	if err != nil {
@@ -50,7 +50,12 @@ func StartWatcher() {
 
 	lastEvent := time.Now()
 	go func() {
-		err := replaceProcess()
+		err := WalkEndpoints(path)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		err = replaceProcess()
 		if err != nil {
 			log.Println(err)
 			return
@@ -65,11 +70,15 @@ func StartWatcher() {
 
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Create) {
 					nameSplit := strings.Split(event.Name, ".")
-					if nameSplit[len(nameSplit)-1] != "go" {
+					if nameSplit[len(nameSplit)-1] != "go" || strings.Contains(event.Name, "registerroutes.go") {
 						continue
 					}
 					if time.Since(lastEvent).Milliseconds() > 100 {
 						log.Println("modified file:", event.Name)
+						err := WalkEndpoints(path)
+						if err != nil {
+							log.Println(err)
+						}
 						err = replaceProcess()
 						if err != nil {
 							log.Println(err)
@@ -83,11 +92,14 @@ func StartWatcher() {
 		}
 	}()
 
-	err = watcher.Add("./")
+	err = watcher.Add(path)
 
 	if err != nil {
+		fmt.Println("Failed to watch routes directory")
 		log.Fatal(err)
 	}
+
+	<-make(chan struct{})
 }
 
 func replaceProcess() error {
