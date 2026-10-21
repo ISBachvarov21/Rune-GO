@@ -91,7 +91,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 				body = reflect.New(bodyType)
 			}
 
-			if err := json.NewDecoder(c.r.Body).Decode(body.Interface()); err != nil {
+			if err := json.NewDecoder(c.R.Body).Decode(body.Interface()); err != nil {
 				response := BadRequest(nil)
 				return response, nil
 			}
