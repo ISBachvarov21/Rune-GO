@@ -121,7 +121,17 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 		}
 
 		values := fn.Call(args)
-		return values[0].Interface().(Response), values[1].Interface().(error)
+		respInterface := values[0].Interface()
+		if respInterface == nil {
+			panic("handler must return a Response")
+		}
+		resp := respInterface.(Response)
+		errInterface := values[1].Interface()
+		if errInterface != nil {
+			err := errInterface.(error)
+			return resp, err
+		}
+		return resp, nil
 	}
 
 	h.router.Handle(method, path, func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
