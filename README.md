@@ -30,18 +30,18 @@ func PostSerializable(s Serializable) (runehttp.Response, error) {
 ```go
 // RUNE POST /post
 func CreatePost(c *runehttp.Context, p PostIM) (runehttp.Response, error) {
-  // Accessing original http.Request to get client IP address
-  clientIP := c.r.Host
+  // Accessing original http.Request to get client authorization token from headers
+  clientIP := c.R.Header.Get("Authorization")
 
   // Do something with client IP
 
   // Validate post fields
 
   // Register post in db
-  postEntry, err = db.Posts.CreatePost(p)
+  postEntry, err := db.Posts.CreatePost(p)
   defer db.Commit()
 
-  if err != null {
+  if err != nil {
     details := struct {
       Message string `json:"message"`
       Error string `json:"error"`
@@ -61,10 +61,10 @@ As you see by these examples, several aspects of the normal Golang HTTP API have
 One registers an endpoint by giving the respective endpoint handler a doc comment containing `RUNE <METHOD> <PATH>`. Doesn't matter where in the comment it is, could be at the start, could be at the end, could be somewhere in the middle, go wild.
 
 ## Accessing original HTTP request, writer and julienschmidt/httprouter's request params
-Accessing any of the aforementioned objects is done through the *runehttp.Context argument. The original request is the `r *http.Request` field, the writer is the `w http.ResponseWriter` field and the request params are in the `ps httprouter.Params` field.
+Accessing any of the aforementioned objects is done through the *runehttp.Context argument. The original request is the `R *http.Request` field, the writer is the `W http.ResponseWriter` field, and the request params are in the `PS httprouter.Params` field.
 
 ## Accessing request body
-You can access the request body as is from the context, but in case you don't want to parse JSON into a struct manually, you can just include said struct in the endpoint arguments. Doing so will instantiate an interface of the struct's type (it can even be a struct pointer if you don't want to copy anything over) and pass it to the handler once it's unmarshalled successfully.
+You can access the request body as is from the context, but in case you don't want to parse JSON into a struct manually, you can just include said struct in the endpoint arguments. Doing so creates a value of the specified struct type, deserializes the JSON body into it, and passes that value to the handler
 
 ## Returning a response to the client
 The whole http.ResponseWriter way of returning a response is outdated. Why not `return` a response and a nillable error instead? Constructing a response can be done using the response constructor helpers, such as runehttp.OK(), runehttp.JSON(), etc., etc.

@@ -7,12 +7,12 @@ import (
 )
 
 type Context struct {
-	w  http.ResponseWriter
-	r  *http.Request
-	ps httprouter.Params
+	W  http.ResponseWriter
+	R  *http.Request
+	PS httprouter.Params
 }
 
 // Param returns the value of the named route parameter, e.g. "id" for "/users/:id".
 func (c *Context) Param(name string) string {
-	return c.ps.ByName(name)
+	return c.PS.ByName(name)
 }
