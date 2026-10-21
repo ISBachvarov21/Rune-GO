@@ -2,7 +2,7 @@
 ## What is it?
 Rune-GO is a Golang rewrite of my (relatively) old C++ HTTP server framework, Rune. It focuses on a good developer experience through a high-level HTTP API.
 ## What does it feature?
-This framework features a hot reload mechanism of the server, automatic body serialization into structs, request responses using returns, and an automatic route registration feature via code generation (WIP)
+This framework features a hot reload mechanism of the server, automatic body serialization into structs, request responses using returns, and an automatic route registration feature via code generation
 ## What is it NOT?
 This is not a framework tuned for execution speed or a low memory footprint, although it uses [julienschmidt's httprouter](https://github.com/julienschmidt/httprouter) for fast routing.
 
