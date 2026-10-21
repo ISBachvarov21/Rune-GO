@@ -31,9 +31,9 @@ func PostSerializable(s Serializable) (runehttp.Response, error) {
 // RUNE POST /post
 func CreatePost(c *runehttp.Context, p PostIM) (runehttp.Response, error) {
   // Accessing original http.Request to get client authorization token from headers
-  clientIP := c.R.Header.Get("Authorization")
+  token := c.R.Header.Get("Authorization")
 
-  // Do something with client IP
+  // Authorize client using the token
 
   // Validate post fields
 
@@ -49,6 +49,7 @@ func CreatePost(c *runehttp.Context, p PostIM) (runehttp.Response, error) {
       Message: "Error during post creation. Try again later.",
       Error: err.Error(),
     }
+	// Return InternalServerError with a json body containing the error details
     return runehttp.InternalServerError(details), nil
   }
 

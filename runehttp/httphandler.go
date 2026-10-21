@@ -118,7 +118,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	}
 
 	h.router.Handle(method, path, func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-		c := &Context{w: w, r: r, ps: ps}
+		c := &Context{W: w, R: r, PS: ps}
 
 		resp, err := wrapped(c)
 
