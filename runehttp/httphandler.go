@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -43,46 +44,45 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	// func (*Context) (runehttp.Response, error)
 	// func (Serializable) (runehttp.Response, error)
 	// func (*Context, Serializable) (runehttp.Response, error)
-	if t.NumIn() < 1 || t.NumIn() > 2 {
-		return fmt.Errorf("handler must only accept one or two arguments")
+	//if t.NumIn() < 1 || t.NumIn() > 2 {
+	//	return fmt.Errorf("handler must only accept one or two arguments")
+	//}
+
+	hasContext := false
+	contextIndex := -1
+	hasBody := false
+	bodyIndex := -1
+	var bodyType reflect.Type
+
+	for i := 0; i < t.NumIn(); i++ {
+		arg := t.In(i)
+
+		if arg == reflect.TypeFor[*Context]() {
+			hasContext = true
+			contextIndex = i
+		} else if arg.Kind() == reflect.Struct {
+			hasBody = true
+			bodyIndex = i
+			bodyType = arg
+		} else if arg.Kind() == reflect.Ptr && arg.Elem().Kind() == reflect.Struct {
+			hasBody = true
+			bodyIndex = i
+			bodyType = arg
+		} else {
+			return fmt.Errorf("handler argument %d must be *Context or a struct type", i)
+		}
 	}
 
 	fn := reflect.ValueOf(handler)
-
-	firstArg := t.In(0)
-	hasContext := firstArg == reflect.TypeFor[*Context]()
-
-	var bodyType reflect.Type
-
-	switch {
-	case hasContext:
-		if t.NumIn() == 2 {
-			bodyType = t.In(1)
-		}
-	case t.NumIn() == 1:
-		bodyType = firstArg
-	default:
-		return fmt.Errorf("first argument must be *Context or a serializable struct")
-	}
-
-	if bodyType != nil {
-		if bodyType.Kind() == reflect.Pointer {
-			if bodyType.Elem().Kind() != reflect.Struct {
-				return fmt.Errorf("body argument must be a struct or a pointer to a struct")
-			}
-		} else if bodyType.Kind() != reflect.Struct {
-			return fmt.Errorf("body argument must be a struct or a pointer to a struct")
-		}
-	}
 
 	wrapped := func(c *Context) (Response, error) {
 		args := make([]reflect.Value, 0, t.NumIn())
 
 		if hasContext {
-			args = append(args, reflect.ValueOf(c))
+			args = slices.Insert(args, contextIndex, reflect.ValueOf(c))
 		}
 
-		if bodyType != nil {
+		if hasBody {
 			var body reflect.Value
 
 			if bodyType.Kind() == reflect.Pointer {
@@ -100,7 +100,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 				body = body.Elem()
 			}
 
-			args = append(args, body)
+			args = slices.Insert(args, bodyIndex, body)
 		}
 
 		values := fn.Call(args)

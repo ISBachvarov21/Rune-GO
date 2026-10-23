@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -82,11 +84,11 @@ func WalkEndpoints(dir string) error {
 		}
 	}
 
-	f, err := os.OpenFile(filepath.Join(dir, "registerroutes.go"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filepath.Join(dir, "registerroutes.go"), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
-	f.Truncate(0)
+
 	defer f.Close()
 
 	tmpl, err := template.ParseFS(templateFS, "templates/registerroutes.go.tmpl")
@@ -94,13 +96,44 @@ func WalkEndpoints(dir string) error {
 		return err
 	}
 
-	err = tmpl.Execute(f, struct {
+	buffer := bytes.NewBuffer([]byte{})
+
+	err = tmpl.Execute(buffer, struct {
 		PackageName string
 		Routes      []Endpoint
 	}{
 		PackageName: packageName,
 		Routes:      endpointList,
 	})
+	if err != nil {
+		return err
+	}
+
+	formatted, err := format.Source(buffer.Bytes())
+	if err != nil {
+		return err
+	}
+
+	stat, _ := f.Stat()
+	originalContents := make([]byte, stat.Size())
+
+	f.Seek(0, 0)
+	_, err = f.Read(originalContents)
+	if err != nil && err.Error() != "EOF" {
+		return err
+	}
+
+	if bytes.Equal(originalContents, formatted) {
+		fmt.Println("No changes needed")
+		return nil // No changes needed
+	}
+
+	err = f.Truncate(0)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(formatted)
 	if err != nil {
 		return err
 	}
@@ -135,7 +168,12 @@ func walkAST(filePath string) error {
 				}
 			}
 			for _, arg := range fn.Type.Params.List {
-				fmt.Printf("Found argument: %s\n", arg.Names[0].Name)
+				for _, name := range arg.Names {
+					fmt.Printf("Found argument: %s\n", name.Name)
+				}
+				//if len(arg.Names) > 0 {
+				//	fmt.Printf("Found argument: %s\n", arg.Names[0].Name)
+				//}
 			}
 		}
 		return true
