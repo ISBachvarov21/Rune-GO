@@ -67,6 +67,7 @@ Accessing any of the aforementioned objects is done through the *runehttp.Contex
 You can access the request body as is from the context, but in case you don't want to parse JSON into a struct manually, you can just include said struct in the endpoint arguments. Doing so creates a value of the specified struct type, deserializes the JSON body into it, and passes that value to the handler
 
 ## Returning a response to the client
-The whole http.ResponseWriter way of returning a response is outdated. Why not `return` a response and a nillable error instead? Constructing a response can be done using the response constructor helpers, such as runehttp.OK(), runehttp.JSON(), etc., etc.
-If error is not nil then the HTTP handler returns an InternalServerError with an empty body.
+The whole http.ResponseWriter way of returning a response is outdated. Why not `return` a response and a nillable error instead? Constructing a response can be done using the response constructor helpers, such as `runehttp.OK()`, `runehttp.JSON()`, etc., etc.
+If error is not nil then the HTTP handler returns `InternalServerError(nil)`.
 
+## Roadmap
