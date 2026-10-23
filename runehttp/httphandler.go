@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"slices"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -76,10 +75,10 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 	fn := reflect.ValueOf(handler)
 
 	wrapped := func(c *Context) (Response, error) {
-		args := make([]reflect.Value, 0, t.NumIn())
+		args := make([]reflect.Value, t.NumIn(), t.NumIn())
 
 		if hasContext {
-			args = slices.Insert(args, contextIndex, reflect.ValueOf(c))
+			args[contextIndex] = reflect.ValueOf(c)
 		}
 
 		if hasBody {
@@ -100,7 +99,7 @@ func (h *HTTPHandler) AddRoute(method string, path string, handler any) error {
 				body = body.Elem()
 			}
 
-			args = slices.Insert(args, bodyIndex, body)
+			args[bodyIndex] = body
 		}
 
 		values := fn.Call(args)
