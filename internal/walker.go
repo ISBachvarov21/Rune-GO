@@ -80,7 +80,7 @@ func WalkEndpoints(dir string) error {
 
 	for _, file := range files {
 		if err := walkAST(file); err != nil {
-			fmt.Printf("Error walking AST for file %s: %v\n", file, err)
+			return fmt.Errorf("Error walking AST for file %s: %v\n", file, err)
 		}
 	}
 
@@ -154,6 +154,12 @@ func walkAST(filePath string) error {
 		return fmt.Errorf("failed to parse %s: %v", filePath, err)
 	}
 
+	if f.Name == nil {
+		return fmt.Errorf("failed to parse %s: no package name", filePath)
+	}
+	if f.Name.Name != packageName && packageName != "" {
+		return fmt.Errorf("package name mismatch: %s != %s", f.Name.Name, packageName)
+	}
 	packageName = f.Name.Name
 	ast.Inspect(f, func(n ast.Node) bool {
 		if fn, ok := n.(*ast.FuncDecl); ok && fn.Doc != nil {
