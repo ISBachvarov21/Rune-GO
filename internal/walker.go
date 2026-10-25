@@ -46,7 +46,11 @@ func WalkEndpoints(dir string) error {
 
 		// Skip directories
 		if info.IsDir() {
-			if info.Name() == "routes" {
+			// Do not skip the parent directory, but skip the subdirectories of the parent directory
+			// This is to avoid walking into the subdirectories of the parent directory, which may contain other Go
+			// files that are not part of the current package
+			splitDir := strings.Split(dir, string(os.PathSeparator))
+			if info.Name() == splitDir[len(splitDir)-1] {
 				return nil
 			}
 			return fs.SkipDir
@@ -80,7 +84,7 @@ func WalkEndpoints(dir string) error {
 
 	for _, file := range files {
 		if err := walkAST(file); err != nil {
-			return fmt.Errorf("Error walking AST for file %s: %v\n", file, err)
+			return fmt.Errorf("Error walking AST for file %s: %v", file, err)
 		}
 	}
 

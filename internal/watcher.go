@@ -53,13 +53,13 @@ func StartWatcher(path string) {
 		err := WalkEndpoints(path)
 		if err != nil {
 			log.Println(err)
-			return
+		} else {
+			err = replaceProcess()
+			if err != nil {
+				log.Println(err)
+			}
 		}
-		err = replaceProcess()
-		if err != nil {
-			log.Println(err)
-			return
-		}
+
 		for {
 			select {
 			case event, ok := <-watcher.Events:
@@ -78,6 +78,8 @@ func StartWatcher(path string) {
 						err := WalkEndpoints(path)
 						if err != nil {
 							log.Println(err)
+							lastEvent = time.Now()
+							continue
 						}
 						err = replaceProcess()
 						if err != nil {
@@ -113,14 +115,12 @@ func replaceProcess() error {
 
 	cmd := exec.Command("go", "build", "-o", fmt.Sprintf("./build/main%s", executableExtension), ".")
 	if err := cmd.Run(); err != nil {
-		log.Printf("Failed to build executable: %v", err)
-		return err
+		return fmt.Errorf("Failed to build executable: %v", err)
 	}
 	compiledFilePath, err := exec.LookPath(fmt.Sprintf("./build/main%s", executableExtension))
 
 	if err != nil {
-		log.Printf("Failed to find compiled binary: %v", err)
-		return err
+		return fmt.Errorf("Failed to find compiled binary: %v", err)
 	}
 
 	if currentHandler.cmd != nil {
@@ -147,8 +147,7 @@ func replaceProcess() error {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Printf("Failed to create stdin pipe: %v", err)
-		return err
+		return fmt.Errorf("Failed to create stdin pipe: %v", err)
 	}
 
 	ready := make(chan struct{})
@@ -157,15 +156,14 @@ func replaceProcess() error {
 	cmd.Stderr = tw
 
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start command: %v", err)
-		return err
+		return fmt.Errorf("Failed to start command: %v", err)
 	}
 
 	currentHandler.cmd = cmd
 	currentHandler.stdin = stdin
 
 	if _, err = io.WriteString(stdin, "port:8080\n"); err != nil {
-		return err
+		return fmt.Errorf("Failed to write to stdin: %v", err)
 	}
 
 	select {

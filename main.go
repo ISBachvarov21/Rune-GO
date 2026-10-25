@@ -12,9 +12,9 @@ func main() {
 	flag.Parse()
 
 	if *shouldWatch {
-		internal.StartWatcher("./routes/")
+		internal.StartWatcher("./routes")
 	} else {
-		err := internal.WalkEndpoints("./routes/")
+		err := internal.WalkEndpoints("./routes")
 		if err != nil {
 			return
 		}
