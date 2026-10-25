@@ -39,6 +39,7 @@ func ...(...) ... {}
 func WalkEndpoints(dir string) error {
 	var files []string
 	endpointList = []Endpoint{}
+	packageName = ""
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -86,6 +87,11 @@ func WalkEndpoints(dir string) error {
 		if err := walkAST(file); err != nil {
 			return fmt.Errorf("Error walking AST for file %s: %v", file, err)
 		}
+	}
+
+	// Nothing matched: no RUNE endpoints found, so there is nothing to generate.
+	if packageName == "" {
+		return nil
 	}
 
 	f, err := os.OpenFile(filepath.Join(dir, "registerroutes.go"), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)

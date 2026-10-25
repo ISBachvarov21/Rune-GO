@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ func TestWalkEndpoints_TableDriven(t *testing.T) {
 		name             string
 		goFileContent    string
 		expectErr        bool
-		expectedFile     string // The file we expect your generator to output
+		expectedFile     string // The file we expect the generator to output
 		expectedContents string // Token/String fragments we expect inside the generated file
 	}{
 		{
@@ -128,6 +129,42 @@ func PostDeep(c *runehttp.Context) (runehttp.Response, error) {
 		PostDeep,
 	)`,
 		},
+		{
+			name: "Invalid arguments in function",
+			goFileContent: `package routes
+import "://github.com"
+
+type Serializable struct {
+	Field string ` + "`json:" + `"field"` + "`" + `
+}
+
+// RUNE POST /path
+func InvalidRoute(s Serializable, *runehttp.Context) (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}
+`,
+			expectErr:        true,
+			expectedFile:     "",
+			expectedContents: "",
+		},
+		{
+			name: "Function with unnamed context pointer arg",
+			goFileContent: `package routes
+import "://github.com"
+
+// RUNE GET /
+func UnnamedContext(*runehttp.Context) (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}
+`,
+			expectErr:    false,
+			expectedFile: "registerroutes.go",
+			expectedContents: `handler.AddRoute(
+		"GET",
+		"/",
+		UnnamedContext,
+	)`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,9 +205,7 @@ func PostDeep(c *runehttp.Context) (runehttp.Response, error) {
 			// 5. Code formatting & content checks
 			formattedGen, formatErr := format.Source(generatedBytes)
 			if formatErr != nil {
-				t.Logf("Warning: Generated code failed gofmt formatting: %v", formatErr)
-				// Fallback to unformatted check so the test doesn't abruptly mask generator errors
-				formattedGen = generatedBytes
+				t.Errorf("Warning: Generated code failed gofmt formatting: %v", formatErr)
 			}
 
 			genStr := string(formattedGen)
@@ -187,6 +222,143 @@ func PostDeep(c *runehttp.Context) (runehttp.Response, error) {
 				// If expectedContents is explicitly empty string, ensure nothing was registered
 				if strings.Contains(genStr, "AddRoute") {
 					t.Errorf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
+				}
+			}
+		})
+	}
+}
+
+func TestMultifileEndpoints(t *testing.T) {
+	tests := []struct {
+		name             string
+		goFileContents   []string
+		expectErr        bool
+		expectedFile     string   // The file we expect the generator to output
+		expectedContents []string // Token/String fragments we expect inside the generated file
+	}{
+		{
+			name: "Multifile package name mismatch",
+			goFileContents: []string{
+				`package package1
+
+import "://github.com"
+
+// RUNE GET /
+func Root() (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}`,
+
+				`package package2
+
+import "://github.com"
+
+// RUNE GET /
+func Root2() (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}`,
+			},
+			expectErr:        true,
+			expectedFile:     "",
+			expectedContents: nil,
+		},
+		{
+			name: "Multifile different endpoint registration",
+			goFileContents: []string{
+				`package routes
+
+import "://github.com"
+
+// RUNE GET /
+func Root() (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}`,
+				`package routes
+
+import "://github.com"
+
+// RUNE POST /
+func PostRoot() (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}`,
+			},
+			expectErr:    false,
+			expectedFile: "registerroutes.go",
+			expectedContents: []string{
+				`handler.AddRoute(
+		"GET",
+		"/",
+		Root,
+	)`,
+				`handler.AddRoute(
+		"POST",
+		"/",
+		PostRoot,
+	)`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 1. Setup isolated environment
+			dir := t.TempDir()
+
+			for i, fileContent := range tt.goFileContents {
+				goFilePath := filepath.Join(dir, fmt.Sprintf("routetest%d.go", i))
+				err := os.WriteFile(goFilePath, []byte(strings.TrimSpace(fileContent)), 0644)
+				if err != nil {
+					t.Fatalf("Setup Failed: couldn't write temp go file: %v", err)
+				}
+			}
+
+			// 2. Execute target framework code walker
+			err := WalkEndpoints(dir)
+
+			// 3. Evaluate error return expectations
+			if (err != nil) != tt.expectErr {
+				t.Fatalf("WalkEndpoints() returned error = %v, expectErr = %v", err, tt.expectErr)
+			}
+
+			// If error was expected or no generation file output target is set, exit case early
+			if tt.expectErr || tt.expectedFile == "" {
+				return
+			}
+
+			// 4. Validate output file generation side effects
+			genFilePath := filepath.Join(dir, tt.expectedFile)
+			generatedBytes, err := os.ReadFile(genFilePath)
+			if err != nil {
+				// If we didn't expect any registrations, file might not be created or might be empty
+				if tt.expectedContents == nil {
+					return
+				}
+				t.Fatalf("Validation Failed: expected file %s was not generated: %v", tt.expectedFile, err)
+			}
+
+			// 5. Code formatting & content checks
+			formattedGen, formatErr := format.Source(generatedBytes)
+			if formatErr != nil {
+				t.Errorf("Warning: Generated code failed gofmt formatting: %v", formatErr)
+			}
+
+			genStr := string(formattedGen)
+
+			if tt.expectedContents != nil {
+				for _, expectation := range tt.expectedContents {
+					// Clean formatting structures for predictable substring matching
+					cleanGen := stripWhitespace(genStr)
+					cleanExpected := stripWhitespace(expectation)
+
+					if expectation != "" {
+						if !strings.Contains(cleanGen, cleanExpected) {
+							t.Errorf("Assertion Failure: Generated route code missing expected registrations.\n\n[WANTED SUBSTRING]:\n%s\n\n[GOT FULL GENERATED FILE]:\n%s", expectation, genStr)
+						}
+					} else {
+						// If expectation is explicitly empty string, ensure nothing was registered
+						if strings.Contains(genStr, "AddRoute") {
+							t.Errorf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
+						}
+					}
 				}
 			}
 		})
