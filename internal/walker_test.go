@@ -205,7 +205,7 @@ func UnnamedContext(*runehttp.Context) (runehttp.Response, error) {
 			// 5. Code formatting & content checks
 			formattedGen, formatErr := format.Source(generatedBytes)
 			if formatErr != nil {
-				t.Errorf("Warning: Generated code failed gofmt formatting: %v", formatErr)
+				t.Fatalf("Warning: Generated code failed gofmt formatting: %v", formatErr)
 			}
 
 			genStr := string(formattedGen)
@@ -216,12 +216,12 @@ func UnnamedContext(*runehttp.Context) (runehttp.Response, error) {
 				cleanExpected := stripWhitespace(tt.expectedContents)
 
 				if !strings.Contains(cleanGen, cleanExpected) {
-					t.Errorf("Assertion Failure: Generated route code missing expected registrations.\n\n[WANTED SUBSTRING]:\n%s\n\n[GOT FULL GENERATED FILE]:\n%s", tt.expectedContents, genStr)
+					t.Fatalf("Assertion Failure: Generated route code missing expected registrations.\n\n[WANTED SUBSTRING]:\n%s\n\n[GOT FULL GENERATED FILE]:\n%s", tt.expectedContents, genStr)
 				}
 			} else {
 				// If expectedContents is explicitly empty string, ensure nothing was registered
 				if strings.Contains(genStr, "AddRoute") {
-					t.Errorf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
+					t.Fatalf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
 				}
 			}
 		})
@@ -233,6 +233,7 @@ func TestMultifileEndpoints(t *testing.T) {
 		name             string
 		goFileContents   []string
 		expectErr        bool
+		expectedErr      string
 		expectedFile     string   // The file we expect the generator to output
 		expectedContents []string // Token/String fragments we expect inside the generated file
 	}{
@@ -258,6 +259,7 @@ func Root2() (runehttp.Response, error) {
 }`,
 			},
 			expectErr:        true,
+			expectedErr:      "package name mismatch",
 			expectedFile:     "",
 			expectedContents: nil,
 		},
@@ -282,6 +284,7 @@ func PostRoot() (runehttp.Response, error) {
 }`,
 			},
 			expectErr:    false,
+			expectedErr:  "",
 			expectedFile: "registerroutes.go",
 			expectedContents: []string{
 				`handler.AddRoute(
@@ -321,6 +324,9 @@ func PostRoot() (runehttp.Response, error) {
 
 			// If error was expected or no generation file output target is set, exit case early
 			if tt.expectErr || tt.expectedFile == "" {
+				if tt.expectErr && err != nil && !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Fatalf("WalkEndpoints() returned error = %v, expected error = %v", err, tt.expectedErr)
+				}
 				return
 			}
 
@@ -338,7 +344,7 @@ func PostRoot() (runehttp.Response, error) {
 			// 5. Code formatting & content checks
 			formattedGen, formatErr := format.Source(generatedBytes)
 			if formatErr != nil {
-				t.Errorf("Warning: Generated code failed gofmt formatting: %v", formatErr)
+				t.Fatalf("Warning: Generated code failed gofmt formatting: %v", formatErr)
 			}
 
 			genStr := string(formattedGen)
@@ -351,17 +357,94 @@ func PostRoot() (runehttp.Response, error) {
 
 					if expectation != "" {
 						if !strings.Contains(cleanGen, cleanExpected) {
-							t.Errorf("Assertion Failure: Generated route code missing expected registrations.\n\n[WANTED SUBSTRING]:\n%s\n\n[GOT FULL GENERATED FILE]:\n%s", expectation, genStr)
+							t.Fatalf("Assertion Failure: Generated route code missing expected registrations.\n\n[WANTED SUBSTRING]:\n%s\n\n[GOT FULL GENERATED FILE]:\n%s", expectation, genStr)
 						}
 					} else {
 						// If expectation is explicitly empty string, ensure nothing was registered
 						if strings.Contains(genStr, "AddRoute") {
-							t.Errorf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
+							t.Fatalf("Assertion Failure: Expected empty registration file, but found mappings:\n%s", genStr)
 						}
 					}
 				}
 			}
 		})
+	}
+}
+
+func TestStaleCodeGeneration(t *testing.T) {
+	goFileContent := `package routes
+
+import "://github.com"
+
+// RUNE GET /
+func Root() (runehttp.Response, error) {
+	return runehttp.OK(nil), nil
+}
+`
+	expectedFile := "registerroutes.go"
+	expectedContentBeforeDeletion := `handler.AddRoute(
+		"GET",
+		"/",
+		Root,
+	)`
+
+	expectedContentAfterDeletion := `func RegisterRoutes(handler *runehttp.HTTPHandler) error {
+	return nil
+}`
+	dir := t.TempDir()
+
+	goFilePath := filepath.Join(dir, "routetest.go")
+	err := os.WriteFile(goFilePath, []byte(strings.TrimSpace(goFileContent)), 0644)
+	if err != nil {
+		t.Fatalf("Setup Failed: couldn't write temp go file: %v", err)
+	}
+
+	err = WalkEndpoints(dir)
+	if err != nil {
+		t.Fatalf("WalkEndpoints() returned error = %v", err)
+	}
+
+	genFilePath := filepath.Join(dir, expectedFile)
+	generatedBytes, err := os.ReadFile(genFilePath)
+	if err != nil {
+		// If we didn't expect any registrations, file might not be created or might be empty
+		if expectedContentBeforeDeletion == "" {
+			return
+		}
+		t.Fatalf("Validation Failed: expected file %s was not generated: %v", expectedFile, err)
+	}
+
+	formattedGen, formatErr := format.Source(generatedBytes)
+	if formatErr != nil {
+		t.Fatalf("Warning: Generated code failed gofmt formatting: %v", formatErr)
+	}
+
+	genStr := string(formattedGen)
+
+	if !strings.Contains(genStr, expectedContentBeforeDeletion) {
+		t.Fatalf("Assertion Failure: Expected stale code generation before deletion to be detected, but it wasn't:\n%s", genStr)
+	}
+
+	os.Remove(goFilePath)
+
+	err = WalkEndpoints(dir)
+	if err != nil {
+		t.Fatalf("WalkEndpoints() returned error = %v", err)
+	}
+
+	generatedBytes, err = os.ReadFile(genFilePath)
+	if err != nil {
+		t.Fatalf("Validation Failed: expected file %s did not get generated: %v", expectedFile, err)
+	}
+
+	formattedGen, formatErr = format.Source(generatedBytes)
+	if formatErr != nil {
+		t.Fatalf("Warning: Generated code failed gofmt formatting: %v", formatErr)
+	}
+
+	genStr = string(formattedGen)
+	if !strings.Contains(genStr, expectedContentAfterDeletion) {
+		t.Fatalf("Assertion Failure: Expected stale code generation after deletion to be detected, but it wasn't:\n%s", genStr)
 	}
 }
 

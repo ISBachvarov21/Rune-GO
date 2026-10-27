@@ -62,16 +62,16 @@ func WalkEndpoints(dir string) error {
 			return nil
 		}
 
-		// Load the file
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+		//// Load the file
+		//data, err := os.ReadFile(path)
+		//if err != nil {
+		//	return err
+		//}
 
 		// Check if the file contains the RUNE VERB(PATH) comment
-		if !containsRuneSignature(data) {
-			return nil
-		}
+		//if !containsRuneSignature(data) {
+		//	return nil
+		//}
 
 		// Add the file to the list
 		files = append(files, path)
